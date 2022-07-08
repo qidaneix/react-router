@@ -1886,7 +1886,7 @@ export function createStaticHandler(init: StaticHandlerInit): StaticHandler {
     shortCircuitState?: Omit<StaticHandlerContext, "location">;
   } {
     let url = new URL(req.url);
-    let location = createLocation("", createPath(url));
+    let location = createLocation("", createPath(url), null, "default");
     let matches = matchRoutes(dataRoutes, location);
     if (matches && routeId) {
       matches = matches.filter((m) => m.route.id === routeId);
