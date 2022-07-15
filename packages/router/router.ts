@@ -229,10 +229,15 @@ export interface RouterInit {
 /**
  * State returned from a server-side query() call
  */
-export type StaticHandlerContext = Pick<
-  RouterState,
-  "location" | "matches" | "loaderData" | "actionData" | "errors"
->;
+export interface StaticHandlerContext {
+  location: RouterState["location"];
+  matches: RouterState["matches"];
+  loaderData: RouterState["loaderData"];
+  actionData: RouterState["actionData"];
+  errors: RouterState["errors"];
+  statusCode: number;
+  headers: Record<string, Headers>;
+}
 
 /**
  * A StaticHandler instance manages a singular SSR navigation/fetch event
@@ -1781,22 +1786,31 @@ export function unstable_createStaticHandler(
     }
 
     if (isRouteRequest) {
-      let actionData: RouteData | null = null;
-      let errors: RouteData | null = null;
       if (isErrorResult(result)) {
         let boundaryMatch = findNearestBoundary(matches, actionMatch.route.id);
-        errors = {
-          [boundaryMatch.route.id]: result.error,
+        return {
+          matches: [actionMatch],
+          loaderData: {},
+          actionData: null,
+          errors: {
+            [boundaryMatch.route.id]: result.error,
+          },
+          // Note: This is unused in queryRoute as we will return the raw error,
+          // or construct a response from the ErrorResponse
+          statusCode: 500,
+          headers: {},
         };
-      } else {
-        actionData = { [actionMatch.route.id]: result.data };
       }
 
       return {
         matches: [actionMatch],
         loaderData: {},
-        actionData,
-        errors,
+        actionData: { [actionMatch.route.id]: result.data },
+        errors: null,
+        // Note: This is unused in queryRoute as we will return the raw
+        // Response or value
+        statusCode: 200,
+        headers: {},
       };
     }
 
@@ -1804,14 +1818,34 @@ export function unstable_createStaticHandler(
       // Store off the pending error - we use it to determine which loaders
       // to call and will commit it when we complete the navigation
       let boundaryMatch = findNearestBoundary(matches, actionMatch.route.id);
-      return await loadRouteData(request, matches, isRouteRequest, undefined, {
-        [boundaryMatch.route.id]: result.error,
-      });
+      let context = await loadRouteData(
+        request,
+        matches,
+        isRouteRequest,
+        undefined,
+        {
+          [boundaryMatch.route.id]: result.error,
+        }
+      );
+
+      // action status codes take precedence over loader status codes
+      return {
+        ...context,
+        statusCode: isRouteErrorResponse(result.error)
+          ? result.error.status
+          : 500,
+      };
     }
 
-    return await loadRouteData(request, matches, isRouteRequest, {
+    let context = await loadRouteData(request, matches, isRouteRequest, {
       [actionMatch.route.id]: result.data,
     });
+
+    // action status codes take precedence over loader status codes
+    return {
+      ...context,
+      ...(result.statusCode ? { statusCode: result.statusCode } : {}),
+    };
   }
 
   async function loadRouteData(
@@ -1833,6 +1867,8 @@ export function unstable_createStaticHandler(
         loaderData: {},
         actionData: pendingActionData || null,
         errors: pendingActionError || null,
+        statusCode: 200,
+        headers: {},
       };
     }
 
@@ -1856,7 +1892,7 @@ export function unstable_createStaticHandler(
     });
 
     // Process and commit output from loaders
-    let { loaderData, errors } = processRouteLoaderData(
+    let context = processRouteLoaderData(
       matches,
       matchesToLoad,
       results,
@@ -1864,10 +1900,9 @@ export function unstable_createStaticHandler(
     );
 
     return {
+      ...context,
       matches,
-      loaderData,
       actionData: pendingActionData || null,
-      errors,
     };
   }
 
@@ -1904,6 +1939,8 @@ export function unstable_createStaticHandler(
           errors: {
             [route.id]: error,
           },
+          statusCode: 404,
+          headers: {},
         },
       };
     }
@@ -2247,7 +2284,12 @@ async function callLoaderOrAction(
       };
     }
 
-    return { type: ResultType.data, data };
+    return {
+      type: ResultType.data,
+      data,
+      statusCode: result.status,
+      headers: result.headers,
+    };
   }
 
   if (resultType === ResultType.error) {
@@ -2309,10 +2351,15 @@ function processRouteLoaderData(
 ): {
   loaderData: RouterState["loaderData"];
   errors: RouterState["errors"] | null;
+  statusCode: number;
+  headers: Record<string, Headers>;
 } {
   // Fill in loaderData/errors from our loaders
   let loaderData: RouterState["loaderData"] = {};
   let errors: RouterState["errors"] | null = null;
+  let statusCode: number | undefined;
+  let foundError = false;
+  let headers: Record<string, Headers> = {};
 
   // Process loader results into state.loaderData/state.errors
   results.forEach((result, index) => {
@@ -2336,11 +2383,27 @@ function processRouteLoaderData(
       errors = Object.assign(errors || {}, {
         [boundaryMatch.route.id]: error,
       });
+      // Once we find our first (highest) error, we set the status code and
+      // prevent deeper status codes from overriding
+      if (!foundError) {
+        foundError = true;
+        statusCode = isRouteErrorResponse(result.error)
+          ? result.error.status
+          : 500;
+      }
     } else if (isDeferredResult(result)) {
       activeDeferreds?.set(id, result.deferredData);
       loaderData[id] = result.deferredData.data;
     } else {
       loaderData[id] = result.data;
+      // Error status codes always override success status codes, but if all
+      // loaders are successful we take the deepest status code.
+      if (result.statusCode !== 200 && !foundError) {
+        statusCode = result.statusCode;
+      }
+      if (result.headers) {
+        headers[id] = result.headers;
+      }
     }
   });
 
@@ -2350,7 +2413,12 @@ function processRouteLoaderData(
     errors = pendingError;
   }
 
-  return { loaderData, errors };
+  return {
+    loaderData,
+    errors,
+    statusCode: statusCode || 200,
+    headers,
+  };
 }
 
 function processLoaderData(
