@@ -152,6 +152,7 @@ export function matchRoutes(
     return null;
   }
 
+  // FIXME:
   let branches = flattenRoutes(routes);
   rankRouteBranches(branches);
 
