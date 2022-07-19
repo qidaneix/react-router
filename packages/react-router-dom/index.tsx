@@ -150,6 +150,7 @@ export function BrowserRouter({
   children,
   window,
 }: BrowserRouterProps) {
+  console.log('hey')
   let historyRef = React.useRef<BrowserHistory>();
   if (historyRef.current == null) {
     historyRef.current = createBrowserHistory({ window });

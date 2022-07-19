@@ -273,7 +273,6 @@ export function useRoutes(
     // router loaded. We can help them understand how to avoid that.
     `useRoutes() may be used only in the context of a <Router> component.`
   );
-
   let { matches: parentMatches } = React.useContext(RouteContext);
   let routeMatch = parentMatches[parentMatches.length - 1];
   let parentParams = routeMatch ? routeMatch.params : {};
@@ -379,7 +378,8 @@ export function _renderMatches(
   parentMatches: RouteMatch[] = []
 ): React.ReactElement | null {
   if (matches == null) return null;
-
+  console.log("matches", matches);
+  console.log("parentMatches", parentMatches);
   return matches.reduceRight((outlet, match, index) => {
     return (
       <RouteContext.Provider
